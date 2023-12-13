@@ -1,0 +1,145 @@
+---
+title: "Contract Stats Pitchers"
+author: "Ben Scartz"
+date: "2023-10-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE}
+library(dplyr)
+library(baseballr)
+load("G:/My Drive/Baseball/Summer 2023/R Projects/Data/Statcast2022.RData")
+load("G:/My Drive/Baseball/Summer 2023/R Projects/Data/Statcast2021.RData")
+#load("G:/My Drive/Baseball/Summer 2023/R Projects/Data/Statcast2020.RData")
+load("G:/My Drive/Baseball/Summer 2023/R Projects/Data/Statcast2019.RData")
+load("G:/My Drive/Baseball/Summer 2023/R Projects/Data/Statcast2018.RData")
+
+```
+
+
+```{r}
+get_stats_pitcher <- function(year) {
+# From Statcast data, calculate metrics for qualified players
+Statcast <- get(paste0('Statcast',year))
+# Get unique values from the 'batter' column of Statcast
+unique_playerID <- unique(Statcast$pitcher)
+
+# Create empty data frame for Metrics
+Metrics <- data.frame()
+# Define label vectors and counts
+hits_vector <- c('single', 'double', 'triple', 'home_run')
+on_base_vector <- c(hits_vector, 'walk', 'hit_by_pitch','catcher_interf')
+at_bats_vector <- c('field_out', 'strikeout', 'grounded_into_double_play', 'fielders_choice', 'fielders_choice_out', 'triple_play', 'strikeout_double_play', 'double_play', 'field_error', 'force_out', hits_vector)
+plate_appearances_vector <- c(at_bats_vector, 'sac_fly', 'walk', 'hit_by_pitch', 'sac_bunt', 'sac_bunt_double_play', 'sac_fly_double_play', 'catcher_interf')
+
+
+for (player_id in unique_playerID) {
+
+  filtered_data <- filter(Statcast, pitcher == player_id & game_type == 'R')
+  
+  # Define count labels
+  walk_count <- sum(filtered_data$events == 'walk')
+  hit_by_pitch_count <- sum(filtered_data$events == 'hit_by_pitch')
+  strikeout_count <- sum(filtered_data$events == 'strikeout')
+  barrel_count <- sum(filtered_data$barrel, na.rm = TRUE)
+  home_run_count <- sum(filtered_data$events == 'home_run')
+
+  # Calculate Batters Faced
+  BF <- sum(filtered_data$events %in% plate_appearances_vector)
+  
+  # Calculate wOBA-against
+  woba_sum <- sum(filtered_data$woba_value, na.rm = TRUE)
+  woba_denominator <- sum(filtered_data$events %in% at_bats_vector) +
+    walk_count +
+    hit_by_pitch_count +
+    sum(filtered_data$events == 'sac_fly')
+  woba_against <- woba_sum / woba_denominator
+          
+  
+  # Calculate K%
+  k_rate <- strikeout_count / BF
+  
+  # Calculate BB%
+  bb_rate <- walk_count / BF
+  
+    # Calculate HR%
+  hr_percentage <- home_run_count / BF
+  
+  # Barrel Rate - against
+  barrel_against <- barrel_count / BF
+  
+  
+  
+  # Create a new row for the pitcher with temp columns for FIP
+  new_row <- data.frame(year = year,
+                        player_id = player_id,
+                        BF = BF,
+                        wOBA = woba_against,
+                        K = k_rate,
+                        BB = bb_rate,
+                        HR = hr_percentage,
+                        Barrel = barrel_against,
+                        tHR = home_run_count,
+                        tBB = walk_count,
+                        tHBP = hit_by_pitch_count,
+                        tK = strikeout_count)
+  
+ # Append the row to the Metrics data frame
+  Metrics <- rbind(Metrics, new_row)
+  
+  Metrics <- Metrics %>%
+    filter(BF > 100)
+                        
+}
+
+# Create player info table and join
+
+mlb_stats <- mlb_stats(stat_type = 'season', player_pool = 'All', stat_group = 'pitching',
+                           season = year)
+
+player_info <- mlb_stats %>%
+  select(player_id, player_full_name,
+         era, innings_pitched, wins, saves, whip)
+
+Metrics <- Metrics %>%
+  left_join(player_info, by = 'player_id') %>%
+  select(player_id, player_full_name, everything(), era, innings_pitched, wins, saves, whip)
+
+# Convert player_info stats to numerics
+Metrics$era <- as.numeric(Metrics$era)
+Metrics$innings_pitched <- as.numeric(Metrics$innings_pitched)
+Metrics$whip <- as.numeric(Metrics$whip)
+
+# Further IP operation
+Metrics$IP <- if_else(Metrics$innings_pitched %% 1 == 0,
+                              Metrics$innings_pitched, 
+                            if_else(Metrics$innings_pitched %% 1 == 1,
+                                Metrics$innings_pitched + 0.23,
+                                Metrics$innings_pitched + 0.47))
+
+
+ # Calculate FIP
+  Metrics$FIP <- ((13*Metrics$tHR + 3*(Metrics$tBB+Metrics$tHBP) - 2*Metrics$tK) /
+                      Metrics$innings_pitched) + 3.2
+  Metrics <- Metrics %>%
+    select(-c(tHR, tBB, tK, tHBP, innings_pitched))
+          
+
+Metrics <- Metrics %>%
+    rename(Name = player_full_name,
+           ERA = era,
+           Wins = wins,
+           Saves = saves,
+           WHIP = whip)
+
+return(Metrics)
+}
+
+stats_p_22 <- get_stats_pitcher(2022) 
+
+```
+

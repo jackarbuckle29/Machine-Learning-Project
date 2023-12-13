@@ -1,0 +1,203 @@
+---
+title: "Baseball Contract XGBoost"
+author: "Ben Scartz"
+date: "2023-10-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE}
+library(xgboost)
+library(tidyverse)
+library(forecast)
+```
+
+Select relevant variables
+```{r}
+xg_boost_model <- function(train, valid) {
+
+train_data <- train %>%
+  select('aav', 'sign_age', 'PA', 'AVG', 'OBP', 'SLG', 'HR', 'wOBA', 'Barrel', 'BB', 'K','ZOsw', 'AEV', 'PA.x', 'AVG.x', 'OBP.x', 'SLG.x', 'HR.x', 'wOBA.x', 'Barrel.x', 'BB.x', 'K.x','ZOsw.x', 'AEV.x', 'PA.y', 'AVG.y', 'OBP.y', 'SLG.y', 'HR.y', 'wOBA.y', 'Barrel.y', 'BB.y', 'K.y','ZOsw.y', 'AEV.y')
+
+valid_data <- valid %>%
+  select('aav', 'sign_age', 'PA', 'AVG', 'OBP', 'SLG', 'HR', 'wOBA', 'Barrel', 'BB', 'K','ZOsw', 'AEV', 'PA.x', 'AVG.x', 'OBP.x', 'SLG.x', 'HR.x', 'wOBA.x', 'Barrel.x', 'BB.x', 'K.x','ZOsw.x', 'AEV.x', 'PA.y', 'AVG.y', 'OBP.y', 'SLG.y', 'HR.y', 'wOBA.y', 'Barrel.y', 'BB.y', 'K.y','ZOsw.y', 'AEV.y')
+
+# training and valid matrices
+dtrain <- xgb.DMatrix(data = as.matrix(train_data[2:35]), label = train_data$aav)
+
+dvalid <- xgb.DMatrix(data = as.matrix(valid_data[2:35]), label = valid_data$aav)
+
+set.seed(42)
+bst <- xgboost(data = dtrain,
+                  eta = 0.05,
+                  nrounds = 500,
+                  verbose = 1,
+                  print_every_n = 20,
+                  eval_metric = 'error')
+
+boost_preds <- predict(bst, dvalid)
+
+pred_dat <- cbind.data.frame(boost_preds, valid$aav)
+
+accuracy <- accuracy(boost_preds, valid$aav)
+xg <- data.frame(name = valid$name, predicted_value = boost_preds, actual_value = valid$aav, 
+                 percent_error = round((abs(boost_preds - valid$aav)/(valid$aav))*100,2))
+
+
+
+plot <- ggplot(data = xg, aes(x = actual_value, y = predicted_value)) +
+          geom_point(color = 'purple') +
+          geom_smooth(method = 'lm', se = TRUE, color = 'dodgerblue') +
+          geom_abline(intercept = 0, slope = 1, color = 'red', linetype = 'dashed') +
+          labs(title = 'XGBoost Accuracy',
+               x = 'Actual AAV',
+               y = 'Predicted AAV') +
+          theme(panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank())
+
+  result_list <- list(accuracy = accuracy,
+                      df = xg,
+                      plot = plot,
+                      model = bst)
+
+  return(result_list)
+
+}
+```
+
+
+```{r}
+xg_boost_c <- xg_boost_model(train = train_c, valid = valid_c)
+xg_boost_1b <- xg_boost_model(train = train_1b, valid = valid_1b)
+xg_boost_2b <- xg_boost_model(train = train_2b, valid = valid_2b)
+xg_boost_3b <- xg_boost_model(train = train_3b, valid = valid_3b)
+xg_boost_ss <- xg_boost_model(train = train_ss, valid = valid_ss)
+xg_boost_of <- xg_boost_model(train = train_of, valid = valid_of)
+```
+
+# Pitchers
+
+Select relevant variables
+```{r}
+xg_boost_model_pitcher <- function(train, valid) {
+
+train_data <- train %>%
+  select('aav', 'sign_age', 'BF', 'wOBA', 'K', 'BB', 'HR', 'Barrel', 'ERA', 'Wins', 'Saves','WHIP', 'IP', 'FIP','BF.x', 'wOBA.x', 'K.x', 'BB.x', 'HR.x', 'Barrel.x', 'ERA.x', 'Wins.x', 'Saves.x','WHIP.x', 'IP.x', 'FIP.x', 'BF.y', 'wOBA.y', 'K.y', 'BB.y', 'HR.y', 'Barrel.y', 'ERA.y', 'Wins.y', 'Saves.y','WHIP.y', 'IP.y', 'FIP.y')
+
+valid_data <- valid %>%
+  select('aav', 'sign_age', 'BF', 'wOBA', 'K', 'BB', 'HR', 'Barrel', 'ERA', 'Wins', 'Saves','WHIP', 'IP', 'FIP','BF.x', 'wOBA.x', 'K.x', 'BB.x', 'HR.x', 'Barrel.x', 'ERA.x', 'Wins.x', 'Saves.x','WHIP.x', 'IP.x', 'FIP.x', 'BF.y', 'wOBA.y', 'K.y', 'BB.y', 'HR.y', 'Barrel.y', 'ERA.y', 'Wins.y', 'Saves.y','WHIP.y', 'IP.y', 'FIP.y')
+
+# training and valid matrices
+dtrain <- xgb.DMatrix(data = as.matrix(train_data[,2:38]), label = train_data$aav)
+
+dvalid <- xgb.DMatrix(data = as.matrix(valid_data[,2:38]), label = valid_data$aav)
+
+set.seed(42)
+bst <- xgboost(data = dtrain,
+                  eta = 0.05,
+                  nrounds = 500,
+                  verbose = 1,
+                  print_every_n = 20,
+                  eval_metric = 'error')
+
+boost_preds <- predict(bst, dvalid)
+
+pred_dat <- cbind.data.frame(boost_preds, valid$aav)
+
+accuracy <- accuracy(boost_preds, valid$aav)
+xg <- data.frame(name = valid$name, predicted_value = boost_preds, actual_value = valid$aav, 
+                 percent_error = round((abs(boost_preds - valid$aav)/(valid$aav))*100,2))
+
+
+
+plot <- ggplot(data = xg, aes(x = actual_value, y = predicted_value)) +
+          geom_point(color = 'purple') +
+          geom_smooth(method = 'lm', se = TRUE, color = 'dodgerblue') +
+          geom_abline(intercept = 0, slope = 1, color = 'red', linetype = 'dashed') +
+          labs(title = 'XGBoost Accuracy',
+               x = 'Actual AAV',
+               y = 'Predicted AAV') +
+          theme(panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank())
+
+  result_list <- list(accuracy = accuracy,
+                      df = xg,
+                      plot = plot,
+                      model = bst)
+
+  return(result_list)
+
+}
+```
+
+
+```{r}
+xg_boost_sp <- xg_boost_model_pitcher(train = train_sp, valid = valid_sp)
+xg_boost_rp <- xg_boost_model_pitcher(train = train_rp, valid = valid_rp)
+```
+
+```{r}
+xg_boost_c$accuracy
+xg_boost_c$df
+xg_boost_c$plot
+```
+
+```{r}
+xg_boost_1b$accuracy
+xg_boost_1b$df
+xg_boost_1b$plot
+```
+
+```{r}
+xg_boost_2b$accuracy
+xg_boost_2b$df
+xg_boost_2b$plot
+```
+
+
+```{r}
+xg_boost_3b$accuracy
+xg_boost_3b$df
+```
+
+
+```{r}
+xg_boost_ss$accuracy
+xg_boost_ss$df
+```
+
+
+```{r}
+xg_boost_of$accuracy
+xg_boost_of$df
+```
+
+
+```{r}
+xg_boost_sp$accuracy
+xg_boost_sp$df %>% arrange(by = desc(actual_value))
+xg_boost_sp$plot
+```
+
+
+```{r}
+xg_boost_rp$accuracy
+xg_boost_rp$df
+```
+
+
+
+
+
+
+
+
+
+
+
+

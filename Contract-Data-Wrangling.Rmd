@@ -1,0 +1,582 @@
+---
+title: "Baseball Contracts"
+author: "Ben Scartz, Jack Arbuckle"
+date: "2023-10-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE}
+library(httr)
+library(jsonlite)
+library(rvest)
+library(jsonlite)
+library(lubridate)
+library(tidyverse)
+library(baseballr)
+```
+
+# Create function to scrape contract data from spotrac.com
+
+```{r}
+
+get_contracts <- function(position) {
+
+url <- paste0('https://www.spotrac.com/mlb/contracts/sort-value/',position,'/all-time/limit-2000/')
+
+contracts_page <- read_html(url)
+ contracts_df <- contracts_page %>%
+  html_table() %>%
+  .[[1]]
+ 
+ contracts_df$name <-  contracts_df$Player %>%
+   str_remove(pattern = '\\w+') %>%
+   str_remove(pattern = 'Jr.') %>%
+   str_extract(pattern = '[^\\s]+ [^\\s]+( [^\\s]+)?')
+ 
+ contracts_df$sign_year <- contracts_df$Player %>%
+   str_extract(pattern = '\\d{4}')
+ 
+ contracts_df$end_year <- contracts_df$Player %>%
+   str_extract(pattern = '\\d{4}-\\d{4}') %>%
+   str_extract(pattern = '\\d{4}$')
+ 
+ contracts_df <- contracts_df %>%
+   select(name, `Signed Age`, Yrs, Value, AAV, 
+          `Signing Bonus`, sign_year, end_year) %>%
+   mutate(`Signed Age` = as.numeric(`Signed Age`))
+ 
+ contracts_df <- contracts_df %>%
+   rename(sign_age = `Signed Age`,
+          length = Yrs,
+          total_value = Value,
+          aav = AAV,
+          sign_bonus = `Signing Bonus`)
+ 
+ contracts_df$total_value <- as.integer(str_remove_all(string = contracts_df$total_value,
+                                                       pattern = '\\$|,'))
+ 
+ contracts_df$aav <- as.integer(str_remove_all(string = contracts_df$aav, 
+                                                pattern = '\\$|,'))
+ 
+ contracts_df$sign_bonus <- as.integer(str_remove_all(string = contracts_df$sign_bonus, 
+                                                pattern = '\\$|,'))
+ 
+ options(scipen = 999)
+ contracts_df$sign_year <- as.integer(contracts_df$sign_year)
+ contracts_df$end_year <- as.integer(contracts_df$end_year)
+ contracts_df$year1 <- contracts_df$sign_year - 1
+ contracts_df$year2 <- contracts_df$sign_year - 2
+ contracts_df$year3 <- contracts_df$sign_year - 3
+ 
+ contracts_df <- contracts_df %>%
+   filter(aav > 720000 & sign_year >= 2019)
+ 
+ return(contracts_df)
+}
+
+contracts_c <- get_contracts('catcher')
+head(contracts_c)
+```
+
+# Calculate statistics using MLB Statcast data
+
+Load Statcast data
+```{r}
+#load("G:/My Drive/Baseball/R Projects/Data/Statcast2022.RData")
+#load("G:/My Drive/Baseball/R Projects/Data/Statcast2021.RData")
+#load("G:/My Drive/Baseball/R Projects/Data/Statcast2020.RData")
+#load("G:/My Drive/Baseball/R Projects/Data/Statcast2019.RData")
+#load("G:/My Drive/Baseball/R Projects/Data/Statcast2018.RData")
+
+```
+
+```{r}
+load("Statcast2022.RData")
+load("Statcast2021.RData")
+load("Statcast2020.RData")
+load("Statcast2019.RData")
+load("Statcast2018.RData")
+
+```
+
+Create function to calculate batter stats for a season 
+
+```{r}
+get_stats <- function(year) {
+# From Statcast data, calculate metrics for qualified players
+Statcast <- get(paste0('Statcast',year))
+# Get unique values from the 'batter' column of Statcast
+unique_playerID <- unique(Statcast$batter)
+
+# Create empty data frame for Metrics
+Metrics <- data.frame()
+
+# Define label vectors and counts
+hits_vector <- c('single', 'double', 'triple', 'home_run')
+on_base_vector <- c(hits_vector, 'walk', 'hit_by_pitch','catcher_interf')
+at_bats_vector <- c('field_out', 'strikeout', 'grounded_into_double_play', 'fielders_choice', 'fielders_choice_out', 'triple_play', 'strikeout_double_play', 'double_play', 'field_error', 'force_out', hits_vector)
+plate_appearances_vector <- c(at_bats_vector, 'sac_fly', 'walk', 'hit_by_pitch', 'sac_bunt', 'sac_bunt_double_play', 'sac_fly_double_play', 'catcher_interf')
+swings_vector <- c('hit_into_play', 'swinging_strike_blocked', 'swinging_strike', 'foul_tip', 'foul')
+
+# Loop through each unique player ID
+for (player_id in unique_playerID) {
+  # Filter Statcast data for the current player ID and game_type == 'R'
+  filtered_data <- filter(Statcast, batter == player_id & game_type == 'R')
+  
+  # Define count labels
+  walk_count <- sum(filtered_data$events == 'walk')
+  strikeout_count <- sum(filtered_data$events == 'strikeout')
+  hit_by_pitch_count <- sum(filtered_data$events == 'hit_by_pitch')
+  barrel_count <- sum(filtered_data$barrel, na.rm = TRUE)
+  home_run_count <- sum(filtered_data$events == 'home_run')
+  swing_count <- sum(filtered_data$description %in% swings_vector)
+  
+  # Calculate desired Metrics for the current player ID
+  
+  # Calculate plate appearances (PA)
+  PA <- sum(filtered_data$events %in% plate_appearances_vector)
+  
+   # Calculate Batting Average
+  batting_avg <- sum(filtered_data$events %in% hits_vector) / sum(filtered_data$events %in% at_bats_vector)
+  
+  #Calculate OBP
+  on_base_percentage <- sum(filtered_data$events %in% on_base_vector) / sum(filtered_data$events %in% plate_appearances_vector)
+  
+  #Calculate Slug%
+  slug_percentage <- (sum(filtered_data$events == 'single') + 
+                        2 * sum(filtered_data$events == 'double') +
+                        3 * sum(filtered_data$events == 'triple') +
+                        4 * sum(filtered_data$events == 'home_run')) /
+    sum(filtered_data$events %in% at_bats_vector)
+  
+  #Calculate OPS
+  ops <- slug_percentage + on_base_percentage
+  
+  # Calculate HR
+  hr <- home_run_count
+  
+  # Calculate wOBA
+  woba_sum <- sum(filtered_data$woba_value, na.rm = TRUE)
+  woba_denominator <- sum(filtered_data$events %in% at_bats_vector) +
+    walk_count +
+    hit_by_pitch_count +
+    sum(filtered_data$events == 'sac_fly')
+  woba <- woba_sum / woba_denominator
+  
+  #Calculate Barrel Rate (Barrel)
+  barrel_rate <- barrel_count / PA
+  
+   # Calculate BB%
+  walk_rate <- walk_count / (PA - hit_by_pitch_count)
+  
+  # Calculate K%
+  strikeout_rate <- strikeout_count / PA
+  
+   # Calculate Z-Swing %
+  
+  z_swing <- sum(filtered_data$description %in% swings_vector & 
+                 filtered_data$true_zone == 'strike', na.rm = TRUE) /
+             sum(filtered_data$description %in% swings_vector)
+  
+  # Calculate O-Swing %
+  
+  o_swing <- sum(filtered_data$description %in% swings_vector & 
+                 filtered_data$true_zone == 'ball', na.rm = TRUE) /
+             sum(filtered_data$description %in% swings_vector)
+  
+  # Calculate ZO-Swing %
+  
+  zo_swing <- z_swing - o_swing
+  
+  # Calculate AEV
+  average_ev <- mean(filtered_data$launch_speed, na.rm = TRUE)
+  
+  # Create a row for the current player in Metrics
+  new_row <- data.frame(year = year,
+                        player_id = player_id, 
+                        PA = PA, 
+                        AVG = batting_avg, 
+                        OBP = on_base_percentage, 
+                        SLG = slug_percentage, 
+                        OPS = ops,
+                        HR = hr,
+                        wOBA = woba, 
+                        Barrel = barrel_rate,
+                        BB = walk_rate, 
+                        K = strikeout_rate,
+                        ZOsw = zo_swing,
+                        AEV = average_ev)
+                    
+  # Append the row to the Metrics data frame
+  Metrics <- rbind(Metrics, new_row)
+  
+  Metrics <- Metrics %>%
+    filter(PA > 100)
+  
+}
+
+# Create player info table and join
+
+mlb_stats <- mlb_stats(stat_type = 'season', player_pool = 'All', stat_group = 'hitting',
+                           season = year)
+
+player_info <- mlb_stats %>%
+  select(player_id, player_full_name, position_abbreviation,
+         team_name, stolen_bases, caught_stealing)
+
+Metrics <- Metrics %>%
+  left_join(player_info, by = 'player_id') %>%
+  select(player_id, player_full_name, position_abbreviation,
+         team_name, everything(), stolen_bases, caught_stealing)
+
+Metrics <- Metrics %>%
+    rename(Name = player_full_name,
+           Team = team_name,
+           POS = position_abbreviation,
+           SB = stolen_bases,
+           CS = caught_stealing)
+
+return(Metrics)
+}
+```
+
+apply function to each year
+```{r}
+stats_22 <- get_stats(2022)
+stats_21 <- get_stats(2021)
+stats_20 <- get_stats(2020)
+stats_19 <- get_stats(2019)
+stats_18 <- get_stats(2018)
+
+head(stats_18)
+```
+
+Edit 2020 data to estimate 162 game stats
+```{r}
+stats_20$PA <- stats_20$PA * 162 / 60
+stats_20$HR <- stats_20$HR * 162 / 60
+stats_20$SB <- stats_20$SB * 162 / 60
+stats_20$CS <- stats_20$CS * 162 / 60
+```
+
+Create combined stats table
+```{r}
+combined_stats <- rbind(stats_22, stats_21, stats_20, stats_19, stats_18)
+
+head(arrange(combined_stats, Name), 15)
+```
+
+Combine stats and contracts into one table
+partition the data into train and validation data
+```{r}
+position_data <- function(combined_stats, contracts) {
+  data <- contracts %>%
+    left_join(combined_stats, by = c("name" = "Name", "year1" = "year")) %>%
+   suffix = c('.1','.2') %>%
+    left_join(combined_stats, by = c("name" = "Name", "year2" = "year")) %>%
+    left_join(combined_stats, by = c("name" = "Name", "year3" = "year")) %>%
+    filter(rowSums(is.na(.)) < 20)
+
+  # Partition into train and valid
+  
+  RNGkind(sample.kind = 'Rounding')
+  set.seed(42)
+  train_rows <- sample(1:dim(data)[1], dim(data)[1]*.67)
+  train <- data[train_rows,]
+  valid <- data[-train_rows,]
+
+result_list <- list(data = data,
+                    train = train,
+                    valid = valid)
+
+return(result_list)
+}
+```
+
+Apply to every position
+```{r}
+contracts_c <- get_contracts('catcher')
+data_c <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_c)$data
+train_c <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_c)$train
+valid_c <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_c)$valid
+
+
+contracts_1b <- get_contracts('1st-base')
+data_1b <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_1b)$data
+train_1b <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_1b)$train
+valid_1b <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_1b)$valid
+
+
+contracts_2b <- get_contracts('2nd-base')
+data_2b <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_2b)$data
+train_2b <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_2b)$train
+valid_2b <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_2b)$valid
+
+
+contracts_3b <- get_contracts('3rd-base')
+data_3b <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_3b)$data
+train_3b <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_3b)$train
+valid_3b <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_3b)$valid
+
+
+contracts_ss <- get_contracts('shortstop')
+data_ss <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_ss)$data
+train_ss <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_ss)$train
+valid_ss <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_ss)$valid
+
+
+contracts_of <- get_contracts('outfield')
+data_of <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_of)$data
+train_of <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_of)$train
+valid_of <- position_data(combined_stats = combined_stats, 
+                         contracts = contracts_of)$valid
+
+```
+# Pitchers
+
+```{r}
+get_stats_pitcher <- function(year) {
+# From Statcast data, calculate metrics for qualified players
+Statcast <- get(paste0('Statcast',year))
+# Get unique values from the 'batter' column of Statcast
+unique_playerID <- unique(Statcast$pitcher)
+
+# Create empty data frame for Metrics
+Metrics <- data.frame()
+# Define label vectors and counts
+hits_vector <- c('single', 'double', 'triple', 'home_run')
+on_base_vector <- c(hits_vector, 'walk', 'hit_by_pitch','catcher_interf')
+at_bats_vector <- c('field_out', 'strikeout', 'grounded_into_double_play', 'fielders_choice', 'fielders_choice_out', 'triple_play', 'strikeout_double_play', 'double_play', 'field_error', 'force_out', hits_vector)
+plate_appearances_vector <- c(at_bats_vector, 'sac_fly', 'walk', 'hit_by_pitch', 'sac_bunt', 'sac_bunt_double_play', 'sac_fly_double_play', 'catcher_interf')
+
+
+for (player_id in unique_playerID) {
+
+  filtered_data <- filter(Statcast, pitcher == player_id & game_type == 'R')
+  
+  # Define count labels
+  walk_count <- sum(filtered_data$events == 'walk')
+  hit_by_pitch_count <- sum(filtered_data$events == 'hit_by_pitch')
+  strikeout_count <- sum(filtered_data$events == 'strikeout')
+  barrel_count <- sum(filtered_data$barrel, na.rm = TRUE)
+  home_run_count <- sum(filtered_data$events == 'home_run')
+
+  # Calculate Batters Faced
+  BF <- sum(filtered_data$events %in% plate_appearances_vector)
+  
+  # Calculate wOBA-against
+  woba_sum <- sum(filtered_data$woba_value, na.rm = TRUE)
+  woba_denominator <- sum(filtered_data$events %in% at_bats_vector) +
+    walk_count +
+    hit_by_pitch_count +
+    sum(filtered_data$events == 'sac_fly')
+  woba_against <- woba_sum / woba_denominator
+          
+  
+  # Calculate K%
+  k_rate <- strikeout_count / BF
+  
+  # Calculate BB%
+  bb_rate <- walk_count / BF
+  
+    # Calculate HR%
+  hr_percentage <- home_run_count / BF
+  
+  # Barrel Rate - against
+  barrel_against <- barrel_count / BF
+  
+  
+  
+  # Create a new row for the pitcher with temp columns for FIP
+  new_row <- data.frame(year = year,
+                        player_id = player_id,
+                        BF = BF,
+                        wOBA = woba_against,
+                        K = k_rate,
+                        BB = bb_rate,
+                        HR = hr_percentage,
+                        Barrel = barrel_against,
+                        tHR = home_run_count,
+                        tBB = walk_count,
+                        tHBP = hit_by_pitch_count,
+                        tK = strikeout_count)
+  
+ # Append the row to the Metrics data frame
+  Metrics <- rbind(Metrics, new_row)
+  
+  Metrics <- Metrics %>%
+    filter(BF > 100)
+                        
+}
+
+# Create player info table and join
+
+mlb_stats <- mlb_stats(stat_type = 'season', player_pool = 'All', stat_group = 'pitching',
+                           season = year)
+
+player_info <- mlb_stats %>%
+  select(player_id, player_full_name,
+         era, innings_pitched, wins, saves, whip)
+
+Metrics <- Metrics %>%
+  left_join(player_info, by = 'player_id') %>%
+  select(player_id, player_full_name, everything(), era, innings_pitched, wins, saves, whip)
+
+# Convert player_info stats to numerics
+Metrics$era <- as.numeric(Metrics$era)
+Metrics$innings_pitched <- as.numeric(Metrics$innings_pitched)
+Metrics$whip <- as.numeric(Metrics$whip)
+
+# Further IP operation
+Metrics$IP <- if_else(Metrics$innings_pitched %% 1 == 0,
+                              Metrics$innings_pitched, 
+                            if_else(Metrics$innings_pitched %% 1 == 1,
+                                Metrics$innings_pitched + 0.23,
+                                Metrics$innings_pitched + 0.47))
+
+
+ # Calculate FIP
+  Metrics$FIP <- ((13*Metrics$tHR + 3*(Metrics$tBB+Metrics$tHBP) - 2*Metrics$tK) /
+                      Metrics$innings_pitched) + 3.2
+  Metrics <- Metrics %>%
+    select(-c(tHR, tBB, tK, tHBP, innings_pitched))
+          
+
+Metrics <- Metrics %>%
+    rename(Name = player_full_name,
+           ERA = era,
+           Wins = wins,
+           Saves = saves,
+           WHIP = whip)
+
+return(Metrics)
+}
+```
+
+
+
+apply function to each year
+```{r}
+stats_22_pitcher <- get_stats_pitcher(2022)
+stats_21_pitcher <- get_stats_pitcher(2021)
+stats_20_pitcher <- get_stats_pitcher(2020)
+stats_19_pitcher <- get_stats_pitcher(2019)
+stats_18_pitcher <- get_stats_pitcher(2018)
+
+head(stats_18_pitcher)
+```
+
+Edit 2020 data to estimate 162 game stats
+```{r}
+stats_20_pitcher$BF <- stats_20_pitcher$BF * 162 / 60
+stats_20_pitcher$Wins <- stats_20_pitcher$Wins * 162 / 60
+stats_20_pitcher$Saves <- stats_20_pitcher$Saves * 162 / 60
+stats_20_pitcher$IP <- stats_20_pitcher$IP * 162 / 60
+```
+
+Create combined stats table
+```{r}
+combined_stats_pitcher <- rbind(stats_22_pitcher, stats_21_pitcher, stats_20_pitcher,
+                        stats_19_pitcher, stats_18_pitcher)
+
+head(arrange(combined_stats_pitcher, Name), 15)
+```
+
+Combine stats and contracts into one table
+partition the data into train and validation data
+```{r}
+pitcher_data <- function(combined_stats, contracts) {
+  data <- contracts %>%
+    left_join(combined_stats, by = c("name" = "Name", "year1" = "year"),
+              suffix = c('.1','.2')) %>%
+    left_join(combined_stats, by = c("name" = "Name", "year2" = "year")) %>%
+    left_join(combined_stats, by = c("name" = "Name", "year3" = "year")) %>%
+    filter(rowSums(is.na(.)) < 20)
+
+  
+  # Partition into train and valid
+  
+  RNGkind(sample.kind = 'Rounding')
+  set.seed(42)
+  train_rows <- sample(1:dim(data)[1], dim(data)[1]*.67)
+  train <- data[train_rows,]
+  valid <- data[-train_rows,]
+
+result_list <- list(data = data,
+                    train = train,
+                    valid = valid)
+
+return(result_list)
+}
+```
+
+Apply to every position
+```{r warning=FALSE}
+contracts_sp <- get_contracts('starting-pitcher')
+data_sp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_sp)$data
+train_sp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_sp)$train
+valid_sp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_sp)$valid
+
+contracts_rp <- get_contracts('relief-pitcher')
+data_rp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_rp)$data
+train_rp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_rp)$train
+valid_rp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_rp)$valid
+
+
+```
+
+
+```{r}
+
+contracts_sp <- get_contracts('')
+data_sp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_sp)$data
+train_sp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_sp)$train
+valid_sp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_sp)$valid
+
+contracts_rp <- get_contracts('relief-pitcher')
+data_rp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_rp)$data
+train_rp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_rp)$train
+valid_rp <- pitcher_data(combined_stats = combined_stats_pitcher, 
+                         contracts = contracts_rp)$valid
+
+```
+
+
+
+
+
+
+
+

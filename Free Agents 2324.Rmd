@@ -1,0 +1,77 @@
+---
+title: "2023-24 Free Agents"
+author: "Ben Scartz"
+date: "2023-11-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE}
+library(tidyverse)
+library(baseballr)
+library(xgboost)
+```
+
+
+```{r}
+free_agents <- read.csv('free_agents2324.csv')
+
+free_agents <- free_agents %>% filter(Name != '')
+
+free_agents$Pos <- free_agents$Pos %>%
+  str_remove_all(pattern = '/.+') %>%
+  str_replace_all(pattern = '(RF)|(LF)|(CF)', replacement = 'OF')
+
+head(free_agents)
+```
+
+
+```{r}
+#load("G:/My Drive/Baseball/Summer 2023/R Projects/Data/Statcast2023.RData")
+load("Statcast2023.RData")
+stats_23 <- get_stats(2023)
+
+head(stats_23)
+```
+
+```{r}
+fa_data <- inner_join(x = free_agents, y = stats_23, by = 'Name') %>%
+  select(-c('Team.x','Reason','POS','Team.y','year')) %>%
+  rename(sign_age = Age) 
+fa_data$aav <- 10000000
+
+fa_data$Salary_2023 <- as.numeric(as.character(fa_data$Salary_2023)) # converted to numeric 
+fa_data$Spotrac_Market_Value <- as.numeric(fa_data$Spotrac_Market_Value) # converted to numeric 
+
+head(fa_data)
+
+
+```
+
+
+```{r}
+fa_c <- fa_data %>% 
+  filter(Pos == 'C') %>%
+  select('aav', 'sign_age', 'PA', 'AVG', 'OBP', 'SLG', 'HR', 'wOBA', 'Barrel', 'BB', 'K',
+         'ZOsw', 'AEV')
+
+dfreeagents <- xgb.DMatrix(data = as.matrix(fa_c[2:13]), label = fa_c$aav)
+dfreeagents
+
+c_preds <- predict(xg_boost_c$model, newdata = dfreeagents) 
+
+pred_dat <- cbind.data.frame(c_preds, fa_data %>% filter(Pos == 'C'))
+
+pred_dat
+
+``` 
+
+
+
+
+
+
+

@@ -1,0 +1,162 @@
+---
+title: "Contract Analysis"
+author: "Ben Scartz, Jack Arbuckle"
+date: "2023-10-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r warning=FALSE}
+library(forecast)
+library(tidyverse)
+library(leaps)
+```
+
+
+```{r}
+exhaustive_vars <- function(train) {
+
+train_data <- train %>%
+  select('aav','PA', 'AVG', 'OBP', 'SLG', 'HR', 'wOBA', 'Barrel', 'BB', 'K',
+         'ZOsw', 'AEV')
+search <- regsubsets(aav ~ ., data = train_data, method = 'exhaustive')
+sum <- summary(search)
+which <- sum$which
+adjr2 <- which.max(sum$adjr2)
+
+result_list <- list(
+  which = which,
+  adjr2 = adjr2)
+
+return(result_list)
+}
+```
+
+
+```{r}
+exhaustive_predict <- function(train, valid, exhaust) {
+  
+exhaust_pred <- predict(exhaust, newdata = valid, na.action = na.pass)
+exhaust_pred <- if_else(exhaust_pred < 720000, 720000, exhaust_pred)
+accuracy <- accuracy(exhaust_pred, valid$aav)
+df <-  data.frame(valid$name, exhaust_pred, valid$aav)
+df$error <- df$exhaust_pred - df$valid.aav
+df <- arrange(df, by = error)
+
+plot <- ggplot(data = df, aes(x = valid.aav, y = exhaust_pred)) +
+          geom_point(color = 'purple') +
+          geom_smooth(method = 'lm', se = TRUE, color = 'dodgerblue') +
+          geom_abline(intercept = 0, slope = 1, color = 'red', linetype = 'dashed') +
+          labs(title = 'Linear Regession Accuracy',
+               x = 'Actual AAV',
+               y = 'Predicted AAV') +
+          ylim(c(0,max(exhaust_pred) + 1000000)) +
+          theme(panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank())
+
+result_list <- list(
+  df = df,
+  plot = plot,
+  accuracy = accuracy)
+
+return(result_list)
+}
+```
+
+
+```{r}
+exhaustive_vars(train_1b)
+
+exhaust_1b <- lm(aav ~ OBP + HR + wOBA + Barrel + K + ZOsw, data = train_1b,
+                 na.action = na.exclude)
+
+exhaustive_predict(train = train_1b, valid = valid_1b, exhaust = exhaust_1b)
+```
+
+
+```{r}
+exhaustive_vars(train_2b)
+
+exhaust_2b <- lm(aav ~ AVG + OBP + HR + BB + ZOsw + AEV, data = train_2b,
+                 na.action = na.exclude)
+
+exhaustive_predict(train = train_2b, valid = valid_2b, exhaust = exhaust_2b)
+```
+
+```{r}
+exhaustive_vars(train_3b)
+
+exhaust_3b <- lm(aav ~ AVG + SLG + HR + Barrel + AEV, data = train_3b,
+                 na.action = na.exclude)
+
+exhaustive_predict(train = train_3b, valid = valid_3b, exhaust = exhaust_3b)
+```
+
+```{r}
+exhaustive_vars(train_ss)
+
+exhaust_ss <- lm(aav ~ PA + AVG + SLG + wOBA + Barrel + K + ZOsw + AEV, data = train_ss,
+                 na.action = na.exclude)
+
+exhaustive_predict(train = train_ss, valid = valid_ss, exhaust = exhaust_ss)
+```
+
+```{r}
+exhaustive_vars(train_of)
+
+exhaust_of <- lm(aav ~ SLG + HR + SLG + wOBA + Barrel + K, data = train_of,
+                 na.action = na.exclude)
+
+exhaustive_predict(train = train_of, valid = valid_of, exhaust = exhaust_of)
+```
+
+# Pitchers
+
+```{r}
+exhaustive_vars_pitcher <- function(train) {
+
+train_data <- train %>%
+  select('aav','BF', 'wOBA', 'K', 'BB', 'HR', 'Barrel', 'ERA', 'Wins', 'Saves',
+         'WHIP', 'IP', 'FIP')
+search <- regsubsets(aav ~ ., data = train_data, method = 'exhaustive')
+sum <- summary(search)
+which <- sum$which
+adjr2 <- which.max(sum$adjr2)
+
+result_list <- list(
+  which = which,
+  adjr2 = adjr2)
+
+return(result_list)
+}
+```
+
+
+```{r}
+exhaustive_vars_pitcher(train = train_sp)
+exhaust_sp <- lm(aav ~ BF + K + BB + HR + Barrel + K + Wins + Saves + IP + FIP,
+                    data = train_sp, na.action = na.exclude)
+
+exhaustive_predict(train = train_sp, valid = valid_sp, exhaust = exhaust_sp)
+```
+```{r}
+exhaustive_vars_pitcher(train = train_rp)
+exhaust_rp <- lm(aav ~ BF + wOBA + BB + HR + Saves + K + WHIP + FIP,
+                    data = train_rp, na.action = na.exclude)
+
+exhaustive_predict(train = train_rp, valid = valid_rp, exhaust = exhaust_rp)
+```
+
+
+
+
+
+
+
+
+
